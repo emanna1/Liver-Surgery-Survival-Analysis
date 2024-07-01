@@ -39,5 +39,5 @@ This project requires R and the following R packages:
 
 ## Results
 
-[Indluded on html file]
+[Included on the html file]
 
