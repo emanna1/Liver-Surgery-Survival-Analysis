@@ -1,0 +1,243 @@
+---
+title: 'Project: Analysis Summary of Surgical Regression Model'
+date: "10/24/2022"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+install.packages(c("tidyverse", "ggplot2", "corrplot", "PerformanceAnalytics", "car", "formatR"))
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(formatR)
+library(corrplot)
+library(car)
+library("PerformanceAnalytics")
+library(formatR)
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(tidy.opts = list(width.cutoff = 60), tidy = TRUE)
+options(tibble.width = Inf) # displays all columns.
+options(tibble.print_max = Inf) # to show all the rows.
+```
+## The Context and the Data Dictionary
+
+A hospital surgical unit was interested in predicting survival in patients undergoing a particular type of liver operation. A random selection of 54 patients was available for analysis. For each patient record, the following information was extracted from the pre-operation evaluation (We assume that higher values of X1 through X4 are desirable). The survival times were made available based off another data collection phase of the project:
+
+Y: Survival Time (in days)
+
+X1: Blood Clotting Score
+
+X2: Prognostic Index
+
+X3: Enzyme Function Test Score
+
+X4: Liver Function Test Score
+
+X5: Age, in years
+
+X6: Indicator variable for gender (0 = female, 1 = male)
+
+## Read and Prep the Data
+
+```{r}
+# Read the data from the working directory
+Survival <- read_csv("Surgical.csv")
+
+# Relabel the variables; transform the response variable; convert gender to nominal
+Mod_Survival <- Survival %>%   rename(Blood_Clotting_Score = "x1",
+         Prognostic_Index = "x2",
+         Enzyme_Score = "x3",
+         Liver_Score = "x4",
+         Age = "x5",
+         Gender = "x6",
+         Survival_Days = "y") %>%
+  mutate(ln_Survival_Days = log(Survival_Days)) %>%
+  mutate(Gender = as.factor(Gender))
+```
+## Distribution Analysis for Survival_Days and log(Survival_Days)
+
+The distribution of survival days (Survival_Days variable) of patients is right skewed. For a multiple linear regression model, we need reasonably normality of the variable. 
+The distribution of the natural log of survival days is reasonably normal. 
+Therefore, we model using the “transformed variable” since this transformation takes care of the skewness and more than likely takes care of the equal variance assumption. 
+
+```{r}
+# Distribution plot of Survival Days
+ggplot(Mod_Survival, aes(x=Survival_Days)) + 
+ geom_histogram(aes(y=..density..), colour="black", fill="white")+
+ geom_density(alpha=.2, fill="#FF6666")+
+  ggtitle("Distribution of Survival Days")
+
+# Distribution plot of log(Survival Days)
+ggplot(Mod_Survival, aes(x=ln_Survival_Days)) + 
+ geom_histogram(aes(y=..density..), colour="black", fill="white")+
+ geom_density(alpha=.2, fill="#FF6666")+
+  ggtitle("Distribution of log(Survival Days)")
+```
+
+## Get the Correlation Matrix
+
+The higher the value of the lab variables, the longer the survival time post-surgery. Enzyme score and liver score have the strongest correlation with survival rates. All of the patients have a lower survival time as they increase in age, but that correlation is weak. The correlations need to be checked for multiple linearity. Enzyme score and liver score have a high positive correlation, .42. We need to keep an eye out for their effect on survival time. It is only going to be possible when we see the regression output. The higher the lab values, the higher the lab time. Enzyme score and liver score have the highest correlation with survival time. Liver score and enzyme score have a high correlation between themselves, 0.65, this indicates multicollinearity. 
+
+```{r}
+attach(Mod_Survival)
+res <- cor(cbind(Blood_Clotting_Score, Prognostic_Index, Enzyme_Score, Liver_Score, Age, Gender, ln_Survival_Days))
+round(res, 2)
+corrplot(res, type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+col<- colorRampPalette(c("blue", "white", "red"))(20)
+heatmap(x = res, col = col, symm = TRUE)
+my_data <- Mod_Survival[, c(1,2,3,4,5, 8)]
+chart.Correlation(my_data, histogram=TRUE, pch=19)
+```
+
+## Comparing Survival Times between Males and Females
+
+We notice that males have higher survival times than females. 
+The median survival time for males is higher than the median survival time for females. 
+
+```{r}
+ggplot(Mod_Survival, aes(x=Gender, y=ln_Survival_Days, fill=Gender)) +
+  geom_boxplot() +
+  ggtitle('Survival times by Gender') 
+```
+
+## The Model Build
+
+Ln(y) = 4.035 + 0.095Blood Clotting Score +0.013 Prognostic Index + 0.016Enzyme_Score -0.0031 Liver_Score -0.0048Age +  0.066Gender   
+Interpretation of the impact each variable has on survival time:
+Holding all other variables constant, a one unit increase in Blood Clotting Score is associated with a 9.5% increase in survival time.
+Holding all other variables constant, a one unit increase in Prognostic Index Score is associated with a 1.3% increase in survival time.
+Holding all other variables constant, a one unit increase in Enzyme Score is associated with a 1.6% increase in survival time.
+Holding all other variables constant, a one unit increase in Liver Score is associated with a 0.3% decrease in survival time.
+Holding all other variables constant, a one unit increase in Age is associated with a     0.5% decrease in survival time.
+Holding all other variables constant, males on average have a 6.6% higher survival time than females. 
+
+```{r, echo = TRUE}
+Survival_OLS <- lm(ln_Survival_Days ~ ., data = Mod_Survival[,-7])
+summary(Survival_OLS)
+```
+
+## Boxplot of the Residuals
+
+The boxplot of residuals incidates that the normality of the residuals assumption is not violated. 
+
+```{r}
+ggplot(Survival_OLS, aes(x=1, y=rstudent(Survival_OLS))) + 
+  geom_boxplot() + xlab(NULL) + ggtitle("Boxplot of the Residuals") + theme(axis.text.y = element_blank()) +
+           coord_flip()
+```
+
+## Residual Analysis
+
+4 assumptions are being tested here: 
+Linearity, normality of the residuals, the homogeneous variance assumption, and whether the model has been correctly specified. The residual plots indicate that these assumptions hold. 
+
+```{r}
+# Normal Probability Plots and Check for Homoscedasticity
+par(mfrow=c(2,2)) # Change the panel layout to 2 x 2
+plot(Survival_OLS)
+par(mfrow=c(1,1)) # Change back to 1 x 1
+
+# Histogram of the Residuals
+ggplot(Survival_OLS, aes(x=rstudent(Survival_OLS))) + geom_histogram() + ggtitle("Histogram of the Residuals") + xlab("Standardized Residuals")
+```
+
+## Residuals versus Predictor Plots
+
+```{r}
+getPlots <- function(X, title) {
+  return(ggplot(Mod_Survival, aes(x = X, y = rstudent(Survival_OLS))) + geom_point() + ggtitle("Residual versus ", title)) + xlab(title)
+}
+getPlots(Mod_Survival$Blood_Clotting_Score, 'Blood Clotting Score')
+getPlots(Mod_Survival$Blood_Clotting_Score, 'Blood Clotting Score')
+getPlots(Mod_Survival$Prognostic_Index, 'Prognostic Index')
+getPlots(Mod_Survival$Enzyme_Score, 'Enzyme Score')
+getPlots(Mod_Survival$Liver_Score, 'Liver Score')
+getPlots(Mod_Survival$Age, 'Age')
+getPlots(Mod_Survival$Gender, 'Gender')
+
+```
+
+## Get the Variance Inflation Factors
+
+Multicollinearity is checked via VIFs (variance inflation factors). According to VIFs, we do not have multicollinearity (since all VIFs < 10). But, in actuality, we see that there is multicollinearity between Liver Score and Blood Clotting score. Indeed, there is a coefficient of correlation of 0.42 between the two. Both also have a positive correlation with survival time (so we would expect both their coefficients to be positive). However, the regression coefficient for Liver Score is negative. This is a classic issue that indicates multicollinearity. 
+
+```{r}
+vif(Survival_OLS)
+```
+
+## The Global F Test
+
+Testing overall model significance. 
+H0: The model is not significant.  H0: Beta1 = … = Beta6 = 0
+H1: The model is significant.  H1: At least one of the regression coefficients <> 0
+State the Type 1 Error Rate: 5% 
+F Statistic Value? 26.69 with a p – value ~ 0
+Conclusion: Reject the null hypothesis. Model relating natural log of survival times to the 4 lab variables, age, and gender is significant. 
+
+## The t-Tests
+
+Blood Clotting Score
+H0: Beta1 = 0 vs H1: Beta1 <>0
+Type 1 error rate is 5%
+T test statistic value is 3.234 with a p-value of 0.00223
+Reject H0: Blood Clotting Score is related with Survival Time.
+Prognostic Index
+H0: Beta1 = 0 vs H1: Beta1 <>0
+Type 1 error rate is 5%
+T test statistic value is 5.650 with a p-value of 0.000000908
+Reject H0: Prognostic Index is related with Survival Time.
+
+Enzyme Score
+H0: Beta1 = 0 vs H1: Beta1 <>0
+Type 1 error rate is 5%
+T test statistic value is 7.683 with a p-value of 0.000000000759
+Reject H0: Enzyme Score is related with Survival Time. 
+Liver Score
+H0: Beta1 = 0 vs H1: Beta1 <>0
+Type 1 error rate is 5%
+T test statistic value is -0.057 with a p-value of 0.95503
+Reject H0: Liver Score is related with Survival Time.
+Age
+H0: Beta1 = 0 vs H1: Beta1 <>0
+Type 1 error rate is 5%
+T test statistic value is -1.513 with a p-value of 0.13709
+Reject H0: Blood Clotting Score is related with Survival Time.
+Gender
+H0: Beta1 = 0 vs H1: Beta1 <>0
+Type 1 error rate is 5%
+T test statistic value is 0.918 with a p-value of 0.36315
+Reject H0: Blood Clotting Score is related with Survival Time
+
+## The Confidence Intervals for the individual parameters
+
+We are 95% confident that the true/unknown regression coefficient for Blood Clotting Score is between 0.036 and 0.154.
+We are 95% confident that the true/unknown regression coefficient for Prognostic Index Score is between 0.008 and 0.0177. 
+We are 95% confident that the true/unknown regression coefficient for Enzyme Score is between 0.012 and 0.020.
+We are 95% confident that the true/unknown regression coefficient for Liver Score is between -0.114 and 0.108.
+We are 95% confident that the true/unknown regression coefficient for Age is between (negative) -0.011 and 0.002.
+We are 95% confident that the true/unknown regression coefficient for Gender is between -.079 and 0.211. 
+
+```{r}
+# The default is 95%; Using level option to change this
+confint(Survival_OLS)
+```
+
+## Calculating the Predicted Value
+
+```{r}
+predict(Survival_OLS, data.frame(Blood_Clotting_Score = 3,  Prognostic_Index= 40, Enzyme_Score = 50, Liver_Score = 2.6, Age = 30, Gender = "1"))
+```
+
+## Calculating the Confidence Interval for the Mean Response and Prediction
+
+We are 95% confident that the true mean survival days for all males who are 30 years old and have the medical profile listed in the statement is between 192 and 354 days.
+
+We are 95% confident that the true survival number of days for a male who is 30 years old and has the medical profile listed in the statement is between 145 and 469 days.
+```{r}
+newdata = data.frame(Blood_Clotting_Score = 3,  Prognostic_Index= 40, Enzyme_Score = 50, Liver_Score = 2.6, Age = 30, Gender = "1")
+predict(Survival_OLS, newdata, interval="predict") 
+predict(Survival_OLS, newdata, interval="confidence") 
+```
+
